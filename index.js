@@ -1,6 +1,6 @@
 /**
  * Required Setting Keys
- * `pendoTrackEventSecretKey`: Pendo_trackEventSecret_Key
+ * `pendoIntegrationKey`: Pendo Integration Key
  * `personasSpaceId`: Personas Space ID
  * `profileApiToken`: Profile API Token
  */
@@ -15,7 +15,7 @@ async function onIdentify(event, settings) {
    * Basic Validation
    */
   if (!event.userId) {
-    throw new ValidationError('userId is required')
+    throw new ValidationError('userId is required');
   }
 
   /**
@@ -36,33 +36,34 @@ async function onIdentify(event, settings) {
   }
 
   /**
-   * Prepare Track Object for Pendo API
+   * Prepare Metadata Object for Pendo API
    */
-  const { userId, timestamp, context } = event;
-  const { traits, groupId } = await fetchedUser.json();
-  const pendoTrackObject = {
-    type: 'track',
-    event: 'User Traits Update',
-    visitorId: userId,
-    accountId: groupId,
-    timestamp: timestamp,
-    properties: traits,
-    context: context
+  const user = await fetchedUser.json();
+  const { country, customer_role, tester_role } = user.traits;
+
+  const pendoMetadataObject = {
+    visitorId: event.userId,
+    values: {
+      country,
+      customer_role,
+      tester_role
+    }
   };
 
   /**
-   * Send Track Object to Pendo API
+   * Send Metadata Object to Pendo API
    */
-  const endpoint = 'https://app.pendo.io/data/track';
+  const baseUrl = 'https://app.pendo.io/api/v1/metadata';
+  const endpoint = `${baseUrl}/visitor/agent/value`;
   let response;
   try {
     response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'x-pendo-integration-key': settings.pendoTrackEventSecretKey,
+        'x-pendo-integration-key': settings.pendoIntegrationKey,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(pendoTrackObject)
+      body: JSON.stringify([pendoMetadataObject])
     });
   } catch (error) {
     // Retry on connection error
@@ -72,6 +73,18 @@ async function onIdentify(event, settings) {
   if (response.status >= 500 || response.status === 429) {
     // Retry on 5xx (server errors) and 429s (rate limits)
     throw new RetryError(`Failed with ${response.status}`);
+  }
+
+  if (response.status === 400) {
+    throw new ValidationError(
+      `Failed with ${response.status}, The format is unacceptable due to malformed JSON or missing field mappings.`
+    );
+  }
+
+  if (response.status === 408) {
+    throw new RetryError(
+      `Failed with ${response.status}, The call took too long and timed out.`
+    );
   }
 }
 
@@ -85,7 +98,7 @@ async function onGroup(event, settings) {
    * Basic Validation
    */
   if (!event.groupId) {
-    throw new ValidationError('groupId is required')
+    throw new ValidationError('groupId is required');
   }
 
   /**
@@ -106,42 +119,54 @@ async function onGroup(event, settings) {
   }
 
   /**
-   * Prepare Track Object for Pendo API
+   * Prepare Metadata Object for Pendo API
    */
-  const { userId, groupId, timestamp, context } = event;
-  const { traits } = await fetchedAccount.json();
-  const pendoTrackObject = {
-    type: 'track',
-    event: 'Account Traits Update',
-    visitorId: userId,
-    accountId: groupId,
-    timestamp: timestamp,
-    properties: traits,
-    context: context
+  const user = await fetchedAccount.json();
+  const { current_plan, premier_support } = user.traits;
+
+  const pendoMetadataObject = {
+    groupId: event.groupId,
+    values: {
+      current_plan,
+      premier_support
+    }
   };
 
   /**
-   * Send Track Object to Pendo API
+   * Send Metadata Object to Pendo API
    */
   let response;
-  const endpoint = 'https://app.pendo.io/data/track';
+  const baseUrl = 'https://app.pendo.io/api/v1/metadata';
+  const endpoint = `${baseUrl}/account/custom/value`;
   try {
     response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'x-pendo-integration-key': settings.pendoTrackEventSecretKey,
+        'x-pendo-integration-key': settings.pendoIntegrationKey,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(pendoTrackObject)
+      body: JSON.stringify([pendoMetadataObject])
     });
   } catch (error) {
     // Retry on connection error
     throw new RetryError(error.message);
   }
 
-  // Retry on 5xx (server errors) and 429s (rate limits)
-  if (response.status >= 500 || response.status === 429 || response.status === 400) {
+  if (response.status >= 500 || response.status === 429) {
+    // Retry on 5xx (server errors) and 429s (rate limits)
     throw new RetryError(`Failed with ${response.status}`);
+  }
+
+  if (response.status === 400) {
+    throw new ValidationError(
+      `Failed with ${response.status}, The format is unacceptable due to malformed JSON or missing field mappings.`
+    );
+  }
+
+  if (response.status === 408) {
+    throw new RetryError(
+      `Failed with ${response.status}, The call took too long and timed out.`
+    );
   }
 }
 
